@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "lint": "eslint .",
     "format": "prettier --write src/**/*.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "client": "node dist/client.js"
   },
   "keywords": [
     "mcp",
@@ -21,7 +22,8 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^13.0.3",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
