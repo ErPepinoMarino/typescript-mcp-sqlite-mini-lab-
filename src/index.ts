@@ -1,7 +1,16 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getDB, getReadOnlyDB } from "./db/connection.js";
-import { isValidIdentifier } from "./db/validate.js";
+import {
+  describeTable,
+  exportCsv,
+  insert,
+  listTableResources,
+  listTables,
+  query,
+  readSchema,
+  readTableResource,
+} from "./db/operations.js";
 import { z } from "zod";
 
 //Creamos el server MCP minimo
@@ -9,7 +18,7 @@ import { z } from "zod";
 //capabilities = lo que el servidor anuncia que sabe hacer
 const server = new McpServer(
   { name: "typescript-mcp-sqlite-lab", version: "1.0.0" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, resources: {} } }
 );
 
 //el transport lee de stdin y escribe en stdout
@@ -25,23 +34,7 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const db = getDB();
-    const tables = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-      )
-      .all();
-    const names = tables.map((t) => (t as { name: string }).name);
-    //Preguntaza ¿Por que type: "text" en el content?
-    //Respuesta:  ContentBlock es una unión discriminada (ver types.d.ts:2037). Cada bloque DEBE llevar un campo type que indica qué es:
-    //{ "type": "text",     "text": "..." }                          // texto
-    //{ "type": "image",    "data": "...", "mimeType": "..." }       // imagen
-    //{ "type": "audio",    "data": "...", "mimeType": "..." }       // audio
-    //{ "type": "resource", "uri": "..." }                           // recurso embebido
-    //clave esto.
-    return {
-      content: [{ type: "text", text: names.join(", ") }],
-    };
+    return listTables(getDB());
   }
 );
 
@@ -56,43 +49,7 @@ server.registerTool(
     inputSchema: { tableName: z.string().min(1) },
   },
   async ({ tableName }) => {
-    if (!isValidIdentifier(tableName)) {
-      return {
-        content: [{ type: "text", text: `Invalid table name: ${tableName}` }],
-        isError: true,
-      };
-    }
-    const db = getDB();
-    const createSql = db
-      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(tableName) as { sql: string } | undefined;
-    if (!createSql) {
-      return {
-        content: [{ type: "text", text: `Table not found: ${tableName}` }],
-        isError: true,
-      };
-    }
-    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as {
-      name: string;
-      type: string;
-      notnull: number;
-      dflt_value: string | null;
-      pk: number;
-    }[];
-    const lines = columns.map(
-      (c) =>
-        `- ${c.name} (${c.type})${c.pk ? " PRIMARY KEY" : ""}${c.notnull ? " NOT NULL" : ""}${
-          c.dflt_value ? ` DEFAULT ${c.dflt_value}` : ""
-        }`
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Table: ${tableName}\n\n${createSql.sql}\n\nColumns:\n${lines.join("\n")}`,
-        },
-      ],
-    };
+    return describeTable(getDB(), tableName);
   }
 );
 
@@ -105,28 +62,8 @@ server.registerTool(
     inputSchema: { sql: z.string().min(1) },
   },
   async ({ sql }) => {
-    const trimmed = sql.trim().replace(/;+\s*$/, "");
-    const allowed = /^(select|explain|values)\b/i;
-    //Filtro de prefijo: barrera amigable, no seguridad real.
     //La garantia real de solo lectura viene de getReadOnlyDB().
-    if (!allowed.test(trimmed)) {
-      return {
-        content: [{ type: "text", text: "Only read-only queries are allowed (SELECT, EXPLAIN, VALUES)" }],
-        isError: true,
-      };
-    }
-    try {
-      const db = getReadOnlyDB();
-      const rows = db.prepare(trimmed).all();
-      return {
-        content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
-      };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Query error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
+    return query(getReadOnlyDB(), sql);
   }
 );
 //Permite insertar una fila en una tabla (lectura-escritura).
@@ -140,49 +77,7 @@ server.registerTool(
     },
   },
   async ({ table, row }) => {
-    if (!isValidIdentifier(table)) {
-      return { content: [{ type: "text", text: `Invalid table name: ${table}` }], isError: true };
-    }
-    const db = getDB();
-    const tableInfo = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(table);
-    if (!tableInfo) {
-      return { content: [{ type: "text", text: `Table not found: ${table}` }], isError: true };
-    }
-    const columns = (
-      db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-    ).map((c) => c.name);
-    const keys = Object.keys(row);
-    const invalid = keys.filter((k) => !columns.includes(k));
-    if (invalid.length > 0) {
-      return {
-        content: [{ type: "text", text: `Invalid columns: ${invalid.join(", ")}` }],
-        isError: true,
-      };
-    }
-    if (keys.length === 0) {
-      return { content: [{ type: "text", text: "Row must contain at least one column" }], isError: true };
-    }
-    const placeholders = keys.map(() => "?").join(", ");
-    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
-    try {
-      const values = keys.map((k) => row[k] as string | number | bigint | Buffer | null);
-      const result = db.prepare(sql).run(...values);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Inserted into ${table}. lastInsertRowid: ${result.lastInsertRowid}, changes: ${result.changes}`,
-          },
-        ],
-      };
-    } catch (err) {
-      return {
-        content: [{ type: "text", text: `Insert error: ${(err as Error).message}` }],
-        isError: true,
-      };
-    }
+    return insert(getDB(), table, row as Record<string, unknown>);
   }
 );
 //Permite exportar el contenido de una tabla como CSV.
@@ -193,31 +88,30 @@ server.registerTool(
     inputSchema: { table: z.string().min(1) },
   },
   async ({ table }) => {
-    if (!isValidIdentifier(table)) {
-      return { content: [{ type: "text", text: `Invalid table name: ${table}` }], isError: true };
-    }
-    const db = getReadOnlyDB();
-    const tableInfo = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-      .get(table);
-    if (!tableInfo) {
-      return { content: [{ type: "text", text: `Table not found: ${table}` }], isError: true };
-    }
-    const columns = (
-      db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-    ).map((c) => c.name);
-    const rows = db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
-    const escape = (val: unknown): string => {
-      const str = String(val ?? "");
-      if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-    const header = columns.map(escape).join(",");
-    const csvRows = rows.map((row) => columns.map((c) => escape(row[c])).join(","));
-    const csv = [header, ...csvRows].join("\n");
-    return { content: [{ type: "text", text: csv }] };
+    return exportCsv(getReadOnlyDB(), table);
+  }
+);
+//Resource: db://schema → entrega el esquema como información legible
+server.registerResource(
+  "schema",
+  "db://schema",
+  { description: "Database schema as SQL CREATE statements", mimeType: "text/plain" },
+  async (_uri: URL) => {
+    return readSchema(getReadOnlyDB());
+  }
+);
+//Resource dinámico: db://table/{tableName} → entrega los datos de cualquier tabla como CSV
+const tableResourceTemplate = new ResourceTemplate("db://table/{tableName}", {
+  list: async () => {
+    return listTableResources(getReadOnlyDB());
+  },
+});
+server.registerResource(
+  "table",
+  tableResourceTemplate,
+  { description: "Individual table data as CSV", mimeType: "text/plain" },
+  async (uri: URL, variables: Record<string, string | string[]>) => {
+    return readTableResource(getReadOnlyDB(), uri.href, variables["tableName"] as string);
   }
 );
 //arrancamos el server.

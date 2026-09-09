@@ -28,31 +28,43 @@ async function main() {
   });
   console.log("Query products:", JSON.stringify(query, null, 2));
 
-const badQuery = await client.callTool({
-  name: "db.query",
-  arguments: { sql: "DROP TABLE users" },
-});
-console.log("Destructive rejected:", JSON.stringify(badQuery, null, 2));
+  const badQuery = await client.callTool({
+    name: "db.query",
+    arguments: { sql: "DROP TABLE users" },
+  });
+  console.log("Destructive rejected:", JSON.stringify(badQuery, null, 2));
 
-const insert = await client.callTool({
-  name: "db.insert",
-  arguments: { table: "products", row: { name: "Widget D", price: 39.99, stock: 10 } },
-});
-console.log("Insert:", JSON.stringify(insert, null, 2));
+  const insert = await client.callTool({
+    name: "db.insert",
+    arguments: { table: "products", row: { name: "Widget D", price: 39.99, stock: 10 } },
+  });
+  console.log("Insert:", JSON.stringify(insert, null, 2));
 
-const badInsert = await client.callTool({
-  name: "db.insert",
-  arguments: { table: "products", row: { nonexistent: 1 } },
-});
-console.log("Bad column rejected:", JSON.stringify(badInsert, null, 2));
+  const badInsert = await client.callTool({
+    name: "db.insert",
+    arguments: { table: "products", row: { nonexistent: 1 } },
+  });
+  console.log("Bad column rejected:", JSON.stringify(badInsert, null, 2));
 
-const csv = await client.callTool({
-  name: "db.export_csv",
-  arguments: { table: "products" },
-});
-console.log("Export CSV:", JSON.stringify(csv, null, 2));
+  const csv = await client.callTool({
+    name: "db.export_csv",
+    arguments: { table: "products" },
+  });
+  console.log("Export CSV:", JSON.stringify(csv, null, 2));
 
-console.log("Available tools:", tools.tools.map((t) => t.name));
+  console.log(
+    "Available tools:",
+    tools.tools.map((t) => t.name)
+  );
+
+  const resources = await client.listResources();
+  console.log("Resources:", JSON.stringify(resources, null, 2));
+
+  const schema = await client.readResource({ uri: "db://schema" });
+  console.log("Schema resource:", JSON.stringify(schema, null, 2));
+
+  const table = await client.readResource({ uri: "db://table/users" });
+  console.log("Table users resource:", JSON.stringify(table, null, 2));
 
   await client.close();
 }

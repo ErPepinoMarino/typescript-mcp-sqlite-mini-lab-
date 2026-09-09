@@ -1,3 +1,4 @@
+//Test que hice al inicio, ni caso.
 import { getDB } from "./connection.js";
 
 const db = getDB();

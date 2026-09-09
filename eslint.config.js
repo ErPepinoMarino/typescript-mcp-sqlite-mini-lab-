@@ -18,7 +18,8 @@ export default [
         module: 'readonly',
         require: 'readonly',
         __dirname: 'readonly',
-        __filename: 'readonly'
+        __filename: 'readonly',
+        URL: 'readonly'
       }
     },
     plugins: { '@typescript-eslint': tseslint },
