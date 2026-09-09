@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { getDB } from "./db/connection.js";
+import { getDB, getReadOnlyDB } from "./db/connection.js";
 import { z } from "zod";
 
 //Creamos el server MCP minimo
@@ -14,7 +14,8 @@ const server = new McpServer(
 //el transport lee de stdin y escribe en stdout
 const transport = new StdioServerTransport();
 
-//Registramos una de las tools que podremos acceder dentro de capabilities
+//Registramos las tools a las que podremos acceder dentro de capabilities
+
 //En este caso es muy sencilla, solo lista los nombres de las tablas alfabeticamente.
 server.registerTool(
   "db.list_tables",
@@ -42,6 +43,7 @@ server.registerTool(
     };
   }
 );
+
 //Aquí ya necesitamos Zod para algo aparentemente tonto, pero no.
 server.registerTool(
   "db.describe_table",
@@ -91,6 +93,40 @@ server.registerTool(
         },
       ],
     };
+  }
+);
+
+//Permite ejecutar una consulta de SOLO LECTURA en nuestra bdd.
+server.registerTool(
+  "db.query",
+  {
+    description: "Execute a read-only SELECT query",
+    //El truco de zod. Aqui llegará la consulta y garantizamos que minimo sera un string con 1 caracter.
+    inputSchema: { sql: z.string().min(1) },
+  },
+  async ({ sql }) => {
+    const trimmed = sql.trim().replace(/;+\s*$/, "");
+    const allowed = /^(select|pragma|explain|values)\b/i;
+    //Filtro de prefijo: barrera amigable, no seguridad real.
+    //La garantia real de solo lectura viene de getReadOnlyDB().
+    if (!allowed.test(trimmed)) {
+      return {
+        content: [{ type: "text", text: "Only read-only queries are allowed (SELECT, EXPLAIN, PRAGMA, VALUES)" }],
+        isError: true,
+      };
+    }
+    try {
+      const db = getReadOnlyDB();
+      const rows = db.prepare(trimmed).all();
+      return {
+        content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Query error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
   }
 );
 //arrancamos el server.

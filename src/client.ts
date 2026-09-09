@@ -22,6 +22,18 @@ async function main() {
   });
   console.log("Describe users:", JSON.stringify(describe, null, 2));
 
+  const query = await client.callTool({
+    name: "db.query",
+    arguments: { sql: "SELECT * FROM products ORDER BY price LIMIT 3" },
+  });
+  console.log("Query products:", JSON.stringify(query, null, 2));
+
+  const badQuery = await client.callTool({
+    name: "db.query",
+    arguments: { sql: "DROP TABLE users" },
+  });
+  console.log("Destructive rejected:", JSON.stringify(badQuery, null, 2));
+
   console.log(
     "Available tools:",
     tools.tools.map((t) => t.name)
