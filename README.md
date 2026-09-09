@@ -16,9 +16,10 @@ SQLite Database
 
 ## ¿Qué hace?
 
-Actualmente expone dos **Tools** via el protocolo MCP:
+Actualmente expone tres **Tools** via el protocolo MCP:
 - **`db.list_tables`** — Lista todas las tablas de la base de datos SQLite
 - **`db.describe_table`** — Describe el esquema de una tabla concreta (columnas, tipos, restricciones, claves)
+- **`db.query`** — Ejecuta una consulta de solo lectura (SELECT)
 
 ### Cómo se usa
 
@@ -31,11 +32,13 @@ Se conecta a un **MCP Client** compatible (como Claude Desktop o un cliente cust
 
 ```
 Cliente → initialize → Server responde con serverInfo y capabilities
-Cliente → listTools → [db.list_tables, db.describe_table]
+Cliente → listTools → [db.list_tables, db.describe_table, db.query]
 Cliente → callTool({ name: "db.list_tables", arguments: {} })
 → "orders, products, users"
 Cliente → callTool({ name: "db.describe_table", arguments: { tableName: "users" } })
 → "CREATE TABLE users (...), Columns: id (INTEGER) PRIMARY KEY..."
+Cliente → callTool({ name: "db.query", arguments: { sql: "SELECT * FROM products" } })
+→ "[{id:1, name:"Widget A", ...}]"
 ```
 
 ## Arquitectura MCP
@@ -105,7 +108,7 @@ src/
 ├── index.ts                  → Entry point del servidor MCP (McpServer)
 ├── client.ts                 → Cliente MCP local (para pruebas)
 └── db/
-    ├── connection.ts         → Singleton de conexión SQLite (getDB)
+    ├── connection.ts         → Singleton de conexión SQLite (getDB, getReadOnlyDB)
     ├── init.ts               → Inicialización: schema + datos seed
     └── verify.ts             → Verificación manual de la base de datos
 tests/
