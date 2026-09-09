@@ -129,5 +129,96 @@ server.registerTool(
     }
   }
 );
+//Permite insertar una fila en una tabla (lectura-escritura).
+server.registerTool(
+  "db.insert",
+  {
+    description: "Insert a row into a table",
+    inputSchema: {
+      table: z.string().min(1),
+      row: z.record(z.string(), z.unknown()),
+    },
+  },
+  async ({ table, row }) => {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+      return { content: [{ type: "text", text: `Invalid table name: ${table}` }], isError: true };
+    }
+    const db = getDB();
+    const tableInfo = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table);
+    if (!tableInfo) {
+      return { content: [{ type: "text", text: `Table not found: ${table}` }], isError: true };
+    }
+    const columns = (
+      db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    ).map((c) => c.name);
+    const keys = Object.keys(row);
+    const invalid = keys.filter((k) => !columns.includes(k));
+    if (invalid.length > 0) {
+      return {
+        content: [{ type: "text", text: `Invalid columns: ${invalid.join(", ")}` }],
+        isError: true,
+      };
+    }
+    if (keys.length === 0) {
+      return { content: [{ type: "text", text: "Row must contain at least one column" }], isError: true };
+    }
+    const placeholders = keys.map(() => "?").join(", ");
+    const sql = `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${placeholders})`;
+    try {
+      const values = keys.map((k) => row[k] as string | number | bigint | Buffer | null);
+      const result = db.prepare(sql).run(...values);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Inserted into ${table}. lastInsertRowid: ${result.lastInsertRowid}, changes: ${result.changes}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Insert error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+//Permite exportar el contenido de una tabla como CSV.
+server.registerTool(
+  "db.export_csv",
+  {
+    description: "Export the contents of a table as CSV",
+    inputSchema: { table: z.string().min(1) },
+  },
+  async ({ table }) => {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+      return { content: [{ type: "text", text: `Invalid table name: ${table}` }], isError: true };
+    }
+    const db = getReadOnlyDB();
+    const tableInfo = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(table);
+    if (!tableInfo) {
+      return { content: [{ type: "text", text: `Table not found: ${table}` }], isError: true };
+    }
+    const columns = (
+      db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    ).map((c) => c.name);
+    const rows = db.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
+    const escape = (val: unknown): string => {
+      const str = String(val ?? "");
+      if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    const header = columns.map(escape).join(",");
+    const csvRows = rows.map((row) => columns.map((c) => escape(row[c])).join(","));
+    const csv = [header, ...csvRows].join("\n");
+    return { content: [{ type: "text", text: csv }] };
+  }
+);
 //arrancamos el server.
 await server.connect(transport);
