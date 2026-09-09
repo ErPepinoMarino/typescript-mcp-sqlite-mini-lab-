@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getDB, getReadOnlyDB } from "./db/connection.js";
+import { isValidIdentifier } from "./db/validate.js";
 import { z } from "zod";
 
 //Creamos el server MCP minimo
@@ -55,8 +56,7 @@ server.registerTool(
     inputSchema: { tableName: z.string().min(1) },
   },
   async ({ tableName }) => {
-    //Validacion para evitar inyeccion, seguridad. (RegEx)
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+    if (!isValidIdentifier(tableName)) {
       return {
         content: [{ type: "text", text: `Invalid table name: ${tableName}` }],
         isError: true,
@@ -106,12 +106,12 @@ server.registerTool(
   },
   async ({ sql }) => {
     const trimmed = sql.trim().replace(/;+\s*$/, "");
-    const allowed = /^(select|pragma|explain|values)\b/i;
+    const allowed = /^(select|explain|values)\b/i;
     //Filtro de prefijo: barrera amigable, no seguridad real.
     //La garantia real de solo lectura viene de getReadOnlyDB().
     if (!allowed.test(trimmed)) {
       return {
-        content: [{ type: "text", text: "Only read-only queries are allowed (SELECT, EXPLAIN, PRAGMA, VALUES)" }],
+        content: [{ type: "text", text: "Only read-only queries are allowed (SELECT, EXPLAIN, VALUES)" }],
         isError: true,
       };
     }
@@ -140,7 +140,7 @@ server.registerTool(
     },
   },
   async ({ table, row }) => {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+    if (!isValidIdentifier(table)) {
       return { content: [{ type: "text", text: `Invalid table name: ${table}` }], isError: true };
     }
     const db = getDB();
@@ -193,7 +193,7 @@ server.registerTool(
     inputSchema: { table: z.string().min(1) },
   },
   async ({ table }) => {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+    if (!isValidIdentifier(table)) {
       return { content: [{ type: "text", text: `Invalid table name: ${table}` }], isError: true };
     }
     const db = getReadOnlyDB();
